@@ -103,7 +103,7 @@ module "iam_load_balancer_controller_role" {
   oidc_providers = {
     one = {
       provider_arn               = resource.aws_iam_openid_connect_provider.oidc_provider.arn
-      namespace_service_accounts = ["system:serviceaccount:kube-system:aws-load-balancer-controller"]
+      namespace_service_accounts = ["kube-system:aws-load-balancer-controller"]
     }
   }
 
