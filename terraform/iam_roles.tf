@@ -120,7 +120,7 @@ module "iam_service_role" {
   ]
   
   source    = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  role_name = local.service
+  role_name = local.tags.Service
 
   oidc_providers = {
     one = {

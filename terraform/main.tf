@@ -9,16 +9,13 @@ terraform {
 
 locals {
   name            = "jumia_challenge"
-  service         = "jumia_phone_validator"
   region          = "eu-west-1"
-  env             = "dev"
 
   tags = {
     Owner       = "ffonseca"
     Service     = "jumia_phone_validator"
     Product     = "devops_challenge"
-    # Resource
-    # Environment
+    Environment = "dev"
   }
 }
 
