@@ -1,86 +1,93 @@
 ################################################################################
-# EKS Module
+# EKS
 ################################################################################
-module "eks" {
-	depends_on = [
-		module.vpc
-	]
+resource "aws_eks_cluster" "cluster" {
+  name     = "${local.name}"
+  role_arn = aws_iam_role.iam_eks_role.arn
 
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 18.0"
-
-  cluster_name                    = local.name
-  cluster_version                 = local.cluster_version
-  cluster_endpoint_private_access = true
-  cluster_endpoint_public_access  = true
-
-	enable_irsa	= true
-
-  cluster_addons = {
-    kube-proxy = {}
-    vpc-cni    = {}
+  vpc_config {
+    subnet_ids = module.vpc.private_subnets
   }
 
-  cluster_encryption_config = [{
-    provider_key_arn = aws_kms_key.eks.arn
-    resources        = ["secrets"]
-  }]
-
-  vpc_id     = module.vpc.vpc_id
-  subnet_ids = module.vpc.private_subnets
-
-  # Fargate profiles use the cluster primary security group so these are not utilized
-  create_cluster_security_group = false
-  create_node_security_group    = false
-
-  fargate_profiles = {
-
-		# Specific profile to devops-challenge
-    devops_challenge = {
-      name = "devops-challenge"
-      selectors = [
-        {
-          namespace = "jumia-*"
-        }
-      ]
-
-			tags = merge(
-    		{ Resource = "fargate_profile" },
-    		local.tags
-  		)
-
-      timeouts = {
-        create = "20m"
-        delete = "20m"
-      }
-    }
-
-    # Specific profile to kube-system namespace
-    kube_system = {
-      name = "kube-system"
-      selectors = [
-        { namespace = "kube-system" }
-      ]
-
-			tags = merge(
-    		{ Resource = "fargate_profile" },
-    		local.tags
-  		)
+  encryption_config {
+    resources = ["secrets"]
+    
+    provider {
+      key_arn = aws_kms_key.eks.arn
     }
   }
 
-	tags = merge(
+  tags = merge(
 		{ Resource = "eks_cluster" },
 		local.tags
 	)
+
+  depends_on = [
+    aws_iam_role_policy_attachment.AmazonEKSClusterPolicy,
+    aws_iam_role_policy_attachment.AmazonEKSVPCResourceController,
+  ]
 }
+
+resource "aws_eks_addon" "vpc_cni_addon" {
+  cluster_name  = aws_eks_cluster.cluster.name
+  addon_name    = "vpc-cni"  
+}
+
+resource "aws_eks_addon" "kube_proxy_addon" {
+  cluster_name  = aws_eks_cluster.cluster.name
+  addon_name    = "kube-proxy"
+}
+
+data "tls_certificate" "tls_cert" {
+  url = aws_eks_cluster.cluster.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_openid_connect_provider" "oidc_provider" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = data.tls_certificate.tls_cert.certificates.*.sha1_fingerprint
+  url             = data.tls_certificate.tls_cert.url
+}
+
+# PROFILE FOR KUBE-SYSTEM AND DEFAULT NAMESPACES
+resource "aws_eks_fargate_profile" "fargate_profile" {
+  cluster_name           = aws_eks_cluster.cluster.name
+  fargate_profile_name   = "kube-system"
+  pod_execution_role_arn = aws_iam_role.iam_default_pods_role.arn
+  subnet_ids             = module.vpc.private_subnets
+
+  selector {
+    namespace = "kube-system"
+  }
+
+  selector {
+    namespace = "default"
+  }
+
+  tags = merge(
+		{ Resource = "fargate_profile" },
+		local.tags
+	)
+}
+
+# PROFILE FOR JUMIA-* NAMESPACES
+resource "aws_eks_fargate_profile" "fargate_profile_service" {
+  cluster_name           = aws_eks_cluster.cluster.name
+  fargate_profile_name   = local.tags.Service
+  pod_execution_role_arn = aws_iam_role.iam_default_pods_role.arn # ALTERAR PARA A ROLE CORRETA
+  subnet_ids             = module.vpc.private_subnets
+
+  selector {
+    namespace = "jumia-*"
+  }
+}
+
 
 ################################################################################
 # Modify EKS CoreDNS Deployment
 ################################################################################
 
 data "aws_eks_cluster_auth" "this" {
-  name = module.eks.cluster_id
+  name = aws_eks_cluster.cluster.id
 }
 
 locals {
@@ -89,16 +96,16 @@ locals {
     kind            = "Config"
     current-context = "terraform"
     clusters = [{
-      name = module.eks.cluster_id
+      name = aws_eks_cluster.cluster.id
       cluster = {
-        certificate-authority-data = module.eks.cluster_certificate_authority_data
-        server                     = module.eks.cluster_endpoint
+        certificate-authority-data = aws_eks_cluster.cluster.certificate_authority[0].data
+        server                     = aws_eks_cluster.cluster.endpoint
       }
     }]
     contexts = [{
       name = "terraform"
       context = {
-        cluster = module.eks.cluster_id
+        cluster = aws_eks_cluster.cluster.id
         user    = "terraform"
       }
     }]
@@ -127,6 +134,11 @@ resource "null_resource" "remove_default_coredns_deployment" {
       kubectl --namespace kube-system delete deployment coredns --kubeconfig <(echo $KUBECONFIG | base64 --decode)
     EOT
   }
+
+  # Waiting for the default fargate profile to be created
+  depends_on = [
+    resource.aws_eks_fargate_profile.fargate_profile
+  ]
 }
 
 resource "null_resource" "modify_kube_dns" {
@@ -140,7 +152,7 @@ resource "null_resource" "modify_kube_dns" {
 
     # We are maintaing the existing kube-dns service and annotating it for Helm to assume control
     command = <<-EOT
-      echo "Setting implicit dependency on ${module.eks.fargate_profiles["kube_system"].fargate_profile_pod_execution_role_arn}"
+      echo "Setting implicit dependency on ${aws_iam_role.iam_default_pods_role.arn}"
       kubectl --namespace kube-system annotate --overwrite service kube-dns meta.helm.sh/release-name=coredns --kubeconfig <(echo $KUBECONFIG | base64 --decode)
       kubectl --namespace kube-system annotate --overwrite service kube-dns meta.helm.sh/release-namespace=kube-system --kubeconfig <(echo $KUBECONFIG | base64 --decode)
       kubectl --namespace kube-system label --overwrite service kube-dns app.kubernetes.io/managed-by=Helm --kubeconfig <(echo $KUBECONFIG | base64 --decode)
@@ -160,7 +172,7 @@ data "aws_eks_addon_version" "this" {
   for_each = toset(["coredns"])
 
   addon_name         = each.value
-  kubernetes_version = module.eks.cluster_version
+  kubernetes_version = aws_eks_cluster.cluster.version
   most_recent        = true
 }
 
@@ -196,4 +208,20 @@ resource "helm_release" "coredns" {
     # Need to ensure the CoreDNS updates are peformed before provisioning
     null_resource.modify_kube_dns
   ]
+}
+
+
+###########
+# OUTPUTS #
+###########
+output "endpoint" {
+  value = aws_eks_cluster.cluster.endpoint
+}
+
+output "kubeconfig-certificate-authority-data" {
+  value = aws_eks_cluster.cluster.certificate_authority[0].data
+}
+
+output "oidc_provider" {
+  value = resource.aws_iam_openid_connect_provider.oidc_provider.arn
 }

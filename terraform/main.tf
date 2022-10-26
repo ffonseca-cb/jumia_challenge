@@ -2,18 +2,16 @@ terraform {
   backend "s3" {
     bucket          = "tfstate-jumia-phone-validator-dev"
     key             = "infra/terraform.tfstate"
-    region          = "us-east-1"
-    dynamodb_table  = "tfstate-jumia-phone-validator-dev"
+    region          = "eu-west-1"
+    dynamodb_table  = "tfstate-jumia-phone-validator"
   }
 }
 
 locals {
   name            = "jumia_challenge"
   service         = "jumia_phone_validator"
-  region          = "us-east-1"
-  env             = "ffonseca"
-
-  cluster_version = "1.22"
+  region          = "eu-west-1"
+  env             = "dev"
 
   tags = {
     Owner       = "ffonseca"
