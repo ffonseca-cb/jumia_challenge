@@ -50,14 +50,16 @@ data "aws_ami" "amazon_linux" {
       "amzn2-ami-hvm-*-x86_64-gp2",
     ]
   }
+}
 
-  # filter {
-  #   name = "owner-alias"
 
-  #   values = [
-  #     "amazon",
-  #   ]
-  # }
+locals {
+  instance-userdata = <<EOF
+#!/bin/bash
+sudo yum update -y
+sudo amazon-linux-extras enable postgresql13
+sudo yum install postgresql -y
+EOF
 }
 
 module "ec2_instance" {
@@ -66,11 +68,14 @@ module "ec2_instance" {
 
   name = "${local.name}_bastion"
 
-  ami                    = data.aws_ami.amazon_linux.id
-  instance_type          = "t3a.micro"
-  key_name               = aws_key_pair.bastion_kp.key_name
-  vpc_security_group_ids = [module.bastion_sg.security_group_id]
-  subnet_id              = module.vpc.public_subnets[0]
+  ami                     = data.aws_ami.amazon_linux.id
+  instance_type           = "t3a.micro"
+  key_name                = aws_key_pair.bastion_kp.key_name
+  vpc_security_group_ids  = [module.bastion_sg.security_group_id]
+  subnet_id               = module.vpc.public_subnets[0]
+  iam_instance_profile    = aws_iam_instance_profile.bastion_instance_rofile.name
+
+  user_data_base64 = base64encode(local.instance-userdata)
 
   tags = merge(
 		{ Resource = "ec2_instance" },

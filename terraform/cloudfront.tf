@@ -1,8 +1,19 @@
 # QUERY ON LOAD BALANCERS TO FIND API ORIGIN
 data "aws_alb" "alb" {
   tags = {
-    "ingress.k8s.aws/resource" = "LoadBalancer"
+    "elbv2.k8s.aws/cluster" = local.name
   }
+
+  depends_on = [
+    resource.time_sleep.wait_90_seconds
+  ]
+}
+
+# WAITING THE ALB CREATION
+resource "time_sleep" "wait_90_seconds" {
+  depends_on = [kubernetes_ingress_v1.ingress]
+
+  create_duration = "90s"
 }
 
 # CLOUDFRONT TO HOST FRONTEND
@@ -81,4 +92,8 @@ module "cloudfront" {
       { Resource = "cloudfront_distribution" },
       local.tags
   )
+
+  depends_on = [
+    data.aws_alb.alb
+  ]
 }

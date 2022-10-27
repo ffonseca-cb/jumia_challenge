@@ -157,3 +157,29 @@ resource "aws_iam_role_policy_attachment" "AmazonEKSFargatePodExecutionRolePolic
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
   role       = resource.aws_iam_role.iam_service_pods_role.name
 }
+
+# ROLE FOR BASTION (EC2_INSTANCE)
+resource "aws_iam_role" "bastion_role" {
+  name = "${local.name}-EC2BastionRole"
+
+  assume_role_policy = <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": "sts:AssumeRole",
+            "Principal": {
+               "Service": "ec2.amazonaws.com"
+            },
+            "Effect": "Allow",
+            "Sid": ""
+        }
+    ]
+}
+EOF
+}
+
+resource "aws_iam_instance_profile" "bastion_instance_rofile" {
+  name = "${local.name}-instance_profile"
+  role = aws_iam_role.bastion_role.name
+}
