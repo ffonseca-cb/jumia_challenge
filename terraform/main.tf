@@ -8,8 +8,9 @@ terraform {
 }
 
 locals {
-  name            = "jumia_challenge"
-  region          = "eu-west-1"
+  name    = "jumia_challenge"
+  region  = "eu-west-1"
+  domain  = "jumia-devops-challenge.eu"
 
   tags = {
     Owner       = "ffonseca"

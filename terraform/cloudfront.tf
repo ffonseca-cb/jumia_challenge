@@ -1,3 +1,10 @@
+# QUERY ON LOAD BALANCERS TO FIND API ORIGIN
+data "aws_alb" "alb" {
+  tags = {
+    "ingress.k8s.aws/resource" = "LoadBalancer"
+  }
+}
+
 # CLOUDFRONT TO HOST FRONTEND
 module "cloudfront" {
   source = "terraform-aws-modules/cloudfront/aws"
@@ -6,6 +13,10 @@ module "cloudfront" {
   enabled             = true
   is_ipv6_enabled     = true
   price_class         = "PriceClass_All"
+
+  aliases = [
+    local.domain
+  ]
 
   default_root_object = "index.html"
 
@@ -21,6 +32,21 @@ module "cloudfront" {
         origin_access_identity = "frontend_bucket"
       }
     }
+
+    api_alb = {
+      domain_name = data.aws_alb.alb.dns_name
+      
+      custom_origin_config = {
+        http_port = "80"
+        https_port = "443"
+
+        origin_ssl_protocols = [
+          "TLSv1.2"
+        ]
+
+        origin_protocol_policy = "http-only"
+      }
+    }
   }
 
   default_cache_behavior = {
@@ -33,12 +59,26 @@ module "cloudfront" {
     query_string    = true
   }
 
+  ordered_cache_behavior = [
+    {
+      path_pattern           = "/api/v1/customers"
+      target_origin_id       = "api_alb"
+      viewer_protocol_policy = "allow-all"
+
+      allowed_methods = ["GET", "HEAD", "OPTIONS"]
+      cached_methods  = ["GET", "HEAD"]
+      compress        = true
+      query_string    = true
+    }
+  ]
+
   viewer_certificate = {
-    cloudfront_default_certificate = true
+    acm_certificate_arn = aws_acm_certificate.cert_us.arn
+    ssl_support_method  = "sni-only"
   }
 
   tags = merge(
-      { Resource = "cloudfront_distro" },
+      { Resource = "cloudfront_distribution" },
       local.tags
   )
 }

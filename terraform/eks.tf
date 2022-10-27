@@ -51,7 +51,7 @@ resource "aws_iam_openid_connect_provider" "oidc_provider" {
 # PROFILE FOR KUBE-SYSTEM AND DEFAULT NAMESPACES
 resource "aws_eks_fargate_profile" "fargate_profile" {
   cluster_name           = aws_eks_cluster.cluster.name
-  fargate_profile_name   = "kube-system"
+  fargate_profile_name   = "kube-system_profile"
   pod_execution_role_arn = aws_iam_role.iam_default_pods_role.arn
   subnet_ids             = module.vpc.private_subnets
 
@@ -72,12 +72,24 @@ resource "aws_eks_fargate_profile" "fargate_profile" {
 # PROFILE FOR JUMIA-* NAMESPACES
 resource "aws_eks_fargate_profile" "fargate_profile_service" {
   cluster_name           = aws_eks_cluster.cluster.name
-  fargate_profile_name   = local.tags.Service
-  pod_execution_role_arn = aws_iam_role.iam_default_pods_role.arn # ALTERAR PARA A ROLE CORRETA
+  fargate_profile_name   = "${replace(basename(local.tags.Service), "_", "-")}_profile"
+  pod_execution_role_arn = aws_iam_role.iam_service_pods_role.arn
   subnet_ids             = module.vpc.private_subnets
 
   selector {
     namespace = "jumia-*"
+  }
+}
+
+# PROFILE FOR JENKINS NAMESPACE
+resource "aws_eks_fargate_profile" "fargate_profile_jenkins" {
+  cluster_name           = aws_eks_cluster.cluster.name
+  fargate_profile_name   = "jenkins_profile"
+  pod_execution_role_arn = aws_iam_role.iam_service_pods_role.arn # ToDo: Create specific role for jenkins
+  subnet_ids             = module.vpc.private_subnets
+
+  selector {
+    namespace = "jenkins"
   }
 }
 
@@ -208,20 +220,4 @@ resource "helm_release" "coredns" {
     # Need to ensure the CoreDNS updates are peformed before provisioning
     null_resource.modify_kube_dns
   ]
-}
-
-
-###########
-# OUTPUTS #
-###########
-output "endpoint" {
-  value = aws_eks_cluster.cluster.endpoint
-}
-
-output "kubeconfig-certificate-authority-data" {
-  value = aws_eks_cluster.cluster.certificate_authority[0].data
-}
-
-output "oidc_provider" {
-  value = resource.aws_iam_openid_connect_provider.oidc_provider.arn
 }

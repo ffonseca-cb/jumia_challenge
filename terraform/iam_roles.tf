@@ -114,23 +114,46 @@ module "iam_load_balancer_controller_role" {
 }
 
 # ROLE FOR jumia-phone-validator
-module "iam_service_role" {
-  depends_on = [
-    aws_eks_cluster.cluster
-  ]
-  
-  source    = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  role_name = local.tags.Service
+resource "aws_iam_role" "iam_service_pods_role" {
+  name = "${local.tags.Service}-PodExecRole"
 
-  oidc_providers = {
-    one = {
-      provider_arn               = resource.aws_iam_openid_connect_provider.oidc_provider.arn
-      namespace_service_accounts = ["jumia-phone-validator:sa-jumia-phone-validator"]
+  assume_role_policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowFargatePods",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "eks-fargate-pods.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    },
+    {
+      "Sid": "AllowIRSA",
+      "Effect": "Allow",
+      "Principal": {
+          "Federated": "${resource.aws_iam_openid_connect_provider.oidc_provider.arn}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+          "StringEquals": {
+              "${replace(resource.aws_iam_openid_connect_provider.oidc_provider.arn, "/^(.*provider/)/", "")}:aud": "sts.amazonaws.com",
+              "${replace(resource.aws_iam_openid_connect_provider.oidc_provider.arn, "/^(.*provider/)/", "")}:sub": "system:serviceaccount:jumia-${replace(basename(local.tags.Product), "_", "-")}:default"
+          }
+      }
     }
-  }
+  ]
+}
+POLICY
 
   tags = merge(
 		{ Resource = "iam_role" },
 		local.tags
 	)
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKSFargatePodExecutionRolePolicy_service" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
+  role       = resource.aws_iam_role.iam_service_pods_role.name
 }

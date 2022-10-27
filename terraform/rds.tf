@@ -62,7 +62,7 @@ module "rds_postgres" {
   create_random_password = false
   db_name  = "postgres"
   username = "postgres"
-  password = "sqlP4ss#postgres2023"
+  password = "sqlP4sspostgres2023"
   port     = 5432
 
   multi_az               = true

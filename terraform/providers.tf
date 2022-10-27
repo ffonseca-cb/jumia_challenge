@@ -1,5 +1,10 @@
 provider "aws" {
-  region = local.region
+  region  = local.region
+}
+
+provider "aws" {
+  alias   = "us-east-1"
+  region  = "us-east-1"
 }
 
 provider "helm" {
