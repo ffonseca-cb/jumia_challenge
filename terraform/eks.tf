@@ -2,7 +2,7 @@
 # EKS
 ################################################################################
 resource "aws_eks_cluster" "cluster" {
-  name     = "${local.name}"
+  name     = local.name
   role_arn = aws_iam_role.iam_eks_role.arn
 
   vpc_config {

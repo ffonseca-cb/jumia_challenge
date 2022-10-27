@@ -13,13 +13,34 @@ module "rds_sg" {
 	)
 }
 
-resource "aws_security_group_rule" "rds_sg_ingress" {
+resource "aws_security_group_rule" "rds_sg_rule_ingress" {
   type              = "ingress"
   from_port         = 5432
   to_port           = 5432
   protocol          = "tcp"
   cidr_blocks       = module.vpc.private_subnets_cidr_blocks
   security_group_id = module.rds_sg.security_group_id
+  description       = "Allow connections from application/private subnets"
+}
+
+resource "aws_security_group_rule" "bastion_sg_rule_ingress" {
+  type                      = "ingress"
+  from_port                 = 5432
+  to_port                   = 5432
+  protocol                  = "tcp"
+  source_security_group_id  = module.bastion_sg.security_group_id
+  security_group_id         = module.rds_sg.security_group_id
+  description               = "Allow connections from bastion host"
+}
+
+resource "aws_security_group_rule" "rds_sg_rule_allow_all_egress" {
+  type              = "egress"
+  from_port         = 0
+  to_port           = 0
+  protocol          = "-1"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = module.rds_sg.security_group_id
+  description       = "Allow all - Egress"
 }
 
 ################################################################################
@@ -38,8 +59,10 @@ module "rds_postgres" {
 
   allocated_storage     = 20
 
+  create_random_password = false
   db_name  = "postgres"
   username = "postgres"
+  password = "sqlP4ss#postgres2023"
   port     = 5432
 
   multi_az               = true
