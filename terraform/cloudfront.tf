@@ -27,7 +27,7 @@ module "cloudfront" {
 
   origin = {
     frontend_bucket = {
-      domain_name = module.frontend_bucket.s3_bucket_bucket_domain_name
+      domain_name = module.frontend_bucket.s3_bucket_bucket_regional_domain_name
       s3_origin_config = {
         origin_access_identity = "frontend_bucket"
       }
