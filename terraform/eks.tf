@@ -2,11 +2,13 @@
 # EKS
 ################################################################################
 resource "aws_eks_cluster" "cluster" {
-  name     = local.name
-  role_arn = aws_iam_role.iam_eks_role.arn
+  name     = "${replace(basename(local.name), "_", "-")}"
+  role_arn = aws_iam_role.iam_cluster_role.arn
 
   vpc_config {
     subnet_ids = module.vpc.private_subnets
+    endpoint_private_access = true
+    endpoint_public_access  = true
   }
 
   encryption_config {
@@ -30,7 +32,7 @@ resource "aws_eks_cluster" "cluster" {
 
 resource "aws_eks_addon" "vpc_cni_addon" {
   cluster_name  = aws_eks_cluster.cluster.name
-  addon_name    = "vpc-cni"  
+  addon_name    = "vpc-cni"
 }
 
 resource "aws_eks_addon" "kube_proxy_addon" {
@@ -48,19 +50,74 @@ resource "aws_iam_openid_connect_provider" "oidc_provider" {
   url             = data.tls_certificate.tls_cert.url
 }
 
-# PROFILE FOR KUBE-SYSTEM AND DEFAULT NAMESPACES
-resource "aws_eks_fargate_profile" "fargate_profile" {
+# ROLE AND POLICIES FOR EKS CLUSTER
+resource "aws_iam_role" "iam_cluster_role" {
+  name = "${local.name}-EKSClusterRole"
+
+  assume_role_policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": [
+          "eks.amazonaws.com",
+          "ecs.amazonaws.com"
+        ]
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+POLICY
+
+  tags = merge(
+		{ Resource = "iam_role" },
+		local.tags
+	)
+}
+
+resource "aws_iam_role_policy" "kms_eks_cluster_policy" {
+  name = "${local.name}-eks-encryption"
+  role = aws_iam_role.iam_cluster_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+            "kms:Encrypt",
+            "kms:Decrypt",
+            "kms:ListGrants",
+            "kms:DescribeKey"
+        ]
+        Effect   = "Allow"
+        Resource = aws_kms_key.eks.arn
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKSClusterPolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role       = aws_iam_role.iam_cluster_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKSVPCResourceController" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
+  role       = aws_iam_role.iam_cluster_role.name
+}
+
+# PROFILE FOR JUMIA-* NAMESPACES
+resource "aws_eks_fargate_profile" "fargate_profile_service" {
   cluster_name           = aws_eks_cluster.cluster.name
-  fargate_profile_name   = "kube-system_profile"
-  pod_execution_role_arn = aws_iam_role.iam_default_pods_role.arn
+  fargate_profile_name   = "${local.service_name}_profile"
+  pod_execution_role_arn = aws_iam_role.iam_service_pods_role.arn
   subnet_ids             = module.vpc.private_subnets
 
   selector {
-    namespace = "kube-system"
-  }
-
-  selector {
-    namespace = "default"
+    namespace = "jumia-*"
   }
 
   tags = merge(
@@ -69,34 +126,149 @@ resource "aws_eks_fargate_profile" "fargate_profile" {
 	)
 }
 
-# PROFILE FOR JUMIA-* NAMESPACES
-resource "aws_eks_fargate_profile" "fargate_profile_service" {
-  cluster_name           = aws_eks_cluster.cluster.name
-  fargate_profile_name   = "${replace(basename(local.tags.Service), "_", "-")}_profile"
-  pod_execution_role_arn = aws_iam_role.iam_service_pods_role.arn
-  subnet_ids             = module.vpc.private_subnets
+# ROLE FOR jumia-phone-validator
+resource "aws_iam_role" "iam_service_pods_role" {
+  name = "${local.tags.Service}-PodExecRole"
 
-  selector {
-    namespace = "jumia-*"
+  assume_role_policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowFargatePods",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": ["eks-fargate-pods.amazonaws.com"]
+      },
+      "Action": "sts:AssumeRole"
+    },
+    {
+      "Sid": "AllowIRSA",
+      "Effect": "Allow",
+      "Principal": {
+          "Federated": "${resource.aws_iam_openid_connect_provider.oidc_provider.arn}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+          "StringEquals": {
+              "${replace(resource.aws_iam_openid_connect_provider.oidc_provider.arn, "/^(.*provider/)/", "")}:aud": "sts.amazonaws.com",
+              "${replace(resource.aws_iam_openid_connect_provider.oidc_provider.arn, "/^(.*provider/)/", "")}:sub": "system:serviceaccount:jumia-${local.product_name}:default"
+          }
+      }
+    }
+  ]
+}
+POLICY
+
+  tags = merge(
+		{ Resource = "iam_role" },
+		local.tags
+	)
+
+  depends_on = [
+    aws_iam_openid_connect_provider.oidc_provider
+  ]
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKSFargatePodExecutionRolePolicy_service" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
+  role       = resource.aws_iam_role.iam_service_pods_role.name
+}
+
+# NODE GROUP USING EC2 LAUNCH TYPE TO SUPPORT K8S METRICS-SERVER
+resource "aws_eks_node_group" "control_plane_node_group" {
+  cluster_name    = aws_eks_cluster.cluster.name
+  node_group_name = "k8s_control_plane"
+  node_role_arn   = aws_iam_role.iam_default_pods_role.arn
+  subnet_ids      = module.vpc.private_subnets
+  instance_types  = ["t3a.medium"]
+
+  scaling_config {
+    desired_size = 2
+    max_size     = 20
+    min_size     = 1
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  lifecycle {
+    ignore_changes = [scaling_config[0].desired_size]
+  }
+
+  # Ensure that IAM Role permissions are created before and deleted after EKS Node Group handling.
+  # Otherwise, EKS will not be able to properly delete EC2 Instances and Elastic Network Interfaces.
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_node_AmazonEKSWorkerNodePolicy,
+    aws_iam_role_policy_attachment.eks_node_AmazonEKS_CNI_Policy,
+    aws_iam_role_policy_attachment.eks_node_AmazonEC2ContainerRegistryReadOnly,
+  ]
+
+  tags =  merge(
+		{ Resource = "eks_nodegroup" },
+		local.tags
+	)
+
+  timeouts {
+    create = "10m"
   }
 }
 
-# PROFILE FOR JENKINS NAMESPACE
-resource "aws_eks_fargate_profile" "fargate_profile_jenkins" {
-  cluster_name           = aws_eks_cluster.cluster.name
-  fargate_profile_name   = "jenkins_profile"
-  pod_execution_role_arn = aws_iam_role.iam_service_pods_role.arn # ToDo: Create specific role for jenkins
-  subnet_ids             = module.vpc.private_subnets
-
-  selector {
-    namespace = "jenkins"
-  }
+resource "aws_iam_role_policy_attachment" "eks_node_AmazonEKSWorkerNodePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role = aws_iam_role.iam_default_pods_role.name
 }
 
+resource "aws_iam_role_policy_attachment" "eks_node_AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role = aws_iam_role.iam_default_pods_role.name
+}
 
-################################################################################
-# Modify EKS CoreDNS Deployment
-################################################################################
+resource "aws_iam_role_policy_attachment" "eks_node_AmazonEC2ContainerRegistryReadOnly" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role = aws_iam_role.iam_default_pods_role.name
+}
+
+# ROLE AND POLICIES FOR DEFAULT/KUBE-SYSTEM PODS
+resource "aws_iam_role" "iam_default_pods_role" {
+  name = "${local.name}-PodExecDefaultRole"
+
+  assume_role_policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": [
+          "eks-fargate-pods.amazonaws.com",
+          "eks.amazonaws.com",
+          "ecs.amazonaws.com",
+          "ec2.amazonaws.com"
+        ]
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+POLICY
+
+  tags = merge(
+		{ Resource = "iam_role" },
+		local.tags
+	)
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.iam_default_pods_role.name
+}
+
+resource "aws_iam_role_policy_attachment" "AmazonEKSFargatePodExecutionRolePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
+  role       = aws_iam_role.iam_default_pods_role.name
+}
 
 data "aws_eks_cluster_auth" "this" {
   name = aws_eks_cluster.cluster.id
@@ -128,96 +300,4 @@ locals {
       }
     }]
   })
-}
-
-# Separate resource so that this is only ever executed once
-resource "null_resource" "remove_default_coredns_deployment" {
-  triggers = {}
-
-  provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
-    environment = {
-      KUBECONFIG = base64encode(local.kubeconfig)
-    }
-
-    # We are removing the deployment provided by the EKS service and replacing it through the self-managed CoreDNS Helm addon
-    # However, we are maintaing the existing kube-dns service and annotating it for Helm to assume control
-    command = <<-EOT
-      kubectl --namespace kube-system delete deployment coredns --kubeconfig <(echo $KUBECONFIG | base64 --decode)
-    EOT
-  }
-
-  # Waiting for the default fargate profile to be created
-  depends_on = [
-    resource.aws_eks_fargate_profile.fargate_profile
-  ]
-}
-
-resource "null_resource" "modify_kube_dns" {
-  triggers = {}
-
-  provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
-    environment = {
-      KUBECONFIG = base64encode(local.kubeconfig)
-    }
-
-    # We are maintaing the existing kube-dns service and annotating it for Helm to assume control
-    command = <<-EOT
-      echo "Setting implicit dependency on ${aws_iam_role.iam_default_pods_role.arn}"
-      kubectl --namespace kube-system annotate --overwrite service kube-dns meta.helm.sh/release-name=coredns --kubeconfig <(echo $KUBECONFIG | base64 --decode)
-      kubectl --namespace kube-system annotate --overwrite service kube-dns meta.helm.sh/release-namespace=kube-system --kubeconfig <(echo $KUBECONFIG | base64 --decode)
-      kubectl --namespace kube-system label --overwrite service kube-dns app.kubernetes.io/managed-by=Helm --kubeconfig <(echo $KUBECONFIG | base64 --decode)
-    EOT
-  }
-
-  depends_on = [
-    null_resource.remove_default_coredns_deployment
-  ]
-}
-
-################################################################################
-# CoreDNS Helm Chart (self-managed)
-################################################################################
-
-data "aws_eks_addon_version" "this" {
-  for_each = toset(["coredns"])
-
-  addon_name         = each.value
-  kubernetes_version = aws_eks_cluster.cluster.version
-  most_recent        = true
-}
-
-resource "helm_release" "coredns" {
-  name             = "coredns"
-  namespace        = "kube-system"
-  create_namespace = false
-  description      = "CoreDNS is a DNS server that chains plugins and provides Kubernetes DNS Services"
-  chart            = "coredns"
-  version          = "1.19.4"
-  repository       = "https://coredns.github.io/helm"
-
-  # For EKS image repositories https://docs.aws.amazon.com/eks/latest/userguide/add-ons-images.html
-  values = [
-    <<-EOT
-      image:
-        repository: 602401143452.dkr.ecr.eu-west-1.amazonaws.com/eks/coredns
-        tag: ${data.aws_eks_addon_version.this["coredns"].version}
-      deployment:
-        name: coredns
-        annotations:
-          eks.amazonaws.com/compute-type: fargate
-      service:
-        name: kube-dns
-        annotations:
-          eks.amazonaws.com/compute-type: fargate
-      podAnnotations:
-        eks.amazonaws.com/compute-type: fargate
-      EOT
-  ]
-
-  depends_on = [
-    # Need to ensure the CoreDNS updates are peformed before provisioning
-    null_resource.modify_kube_dns
-  ]
 }

@@ -43,41 +43,46 @@ resource "aws_security_group_rule" "rds_sg_rule_allow_all_egress" {
   description       = "Allow all - Egress"
 }
 
-################################################################################
-# RDS Module
-################################################################################
-module "rds_postgres" {
-  source  = "terraform-aws-modules/rds/aws"
-
-  identifier = "${replace(basename(local.tags.Service), "_", "-")}-db-${local.tags.Environment}"
-
-  engine               = "postgres"
-  engine_version       = "14.1"
-  family               = "postgres14" # DB parameter group
-  major_engine_version = "14"         # DB option group
-  instance_class       = "db.t4g.small"
+# RDS INSTANCE
+resource "aws_db_instance" "postgres" {
+  identifier            = "${local.service_name}"
 
   allocated_storage     = 20
 
-  create_random_password = false
-  db_name  = "postgres"
-  username = "postgres"
-  password = "sqlP4sspostgres2023"
-  port     = 5432
+  db_name               = local.tags.Service
+  engine                = "postgres"
+  engine_version        = "14.4"
+  instance_class        = "db.t4g.small"
+  username              = "${local.tags.Service}_dba"
+  password              = var.db_password
+  #password              = templatefile("../../rds_pass.txt", { "\n" = "" })
+  port                  = 5432
 
-  multi_az               = true
-  db_subnet_group_name   = module.vpc.database_subnet_group
+  iam_database_authentication_enabled = true
+
+  skip_final_snapshot   = true
+  multi_az              = true
+  db_subnet_group_name  = module.vpc.database_subnet_group
   vpc_security_group_ids = [module.rds_sg.security_group_id]
 
-  maintenance_window              = "Mon:00:00-Mon:03:00"
-  backup_window                   = "03:30-06:30"
-
-  backup_retention_period = 1
-  skip_final_snapshot     = true
-  deletion_protection     = false
+  maintenance_window      = "Mon:00:00-Mon:03:00"
+  backup_window           = "03:30-06:30"
+  backup_retention_period = 30
 
   tags = merge(
 		{ Resource = "rds_instance" },
 		local.tags
 	)
+}
+
+# UPLOADING SQL LOAD TO S3 (tfstate bucket in this case)
+resource "aws_s3_object" "object" {
+  bucket = local.bootstrap_bucket
+  key    = "sql-load/sample.sql"
+  source = "resources/sample.sql"
+}
+
+data "aws_s3_object" "secret" {
+  bucket = local.bootstrap_bucket
+  key    = "rds/secret"
 }

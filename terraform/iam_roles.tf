@@ -1,106 +1,8 @@
-# ROLE AND POLICIES FOR EKS CLUSTER
-resource "aws_iam_role" "iam_eks_role" {
-  name = "${local.name}-EKSClusterRole"
-
-  assume_role_policy = <<POLICY
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Service": [
-          "eks.amazonaws.com",
-          "ecs.amazonaws.com"
-        ]
-      },
-      "Action": "sts:AssumeRole"
-    }
-  ]
-}
-POLICY
-
-  tags = merge(
-		{ Resource = "iam_role" },
-		local.tags
-	)
-}
-
-resource "aws_iam_role_policy" "kms" {
-  name = "${local.name}-eks-encryption"
-  role = aws_iam_role.iam_eks_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = [
-            "kms:Encrypt",
-            "kms:Decrypt",
-            "kms:ListGrants",
-            "kms:DescribeKey"
-        ]
-        Effect   = "Allow"
-        Resource = aws_kms_key.eks.arn
-      },
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "AmazonEKSClusterPolicy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role       = aws_iam_role.iam_eks_role.name
-}
-
-resource "aws_iam_role_policy_attachment" "AmazonEKSVPCResourceController" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
-  role       = aws_iam_role.iam_eks_role.name
-}
-
-# ROLE AND POLICIES FOR DEFAULT/KUBE-SYSTEM PODS
-resource "aws_iam_role" "iam_default_pods_role" {
-  name = "${local.name}-PodExecDefaultRole"
-
-  assume_role_policy = <<POLICY
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Service": [
-          "eks-fargate-pods.amazonaws.com",
-          "eks.amazonaws.com",
-          "ecs.amazonaws.com",
-          "ec2.amazonaws.com"
-        ]
-      },
-      "Action": "sts:AssumeRole"
-    }
-  ]
-}
-POLICY
-
-  tags = merge(
-		{ Resource = "iam_role" },
-		local.tags
-	)
-}
-
-resource "aws_iam_role_policy_attachment" "AmazonEKS_CNI_Policy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-  role       = aws_iam_role.iam_default_pods_role.name
-}
-
-resource "aws_iam_role_policy_attachment" "AmazonEKSFargatePodExecutionRolePolicy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
-  role       = aws_iam_role.iam_default_pods_role.name
-}
-
-# ROLE FOR AWS LOAD BALANCER CONTROLLER
+# # ROLE FOR AWS LOAD BALANCER CONTROLLER
 module "iam_load_balancer_controller_role" {
   depends_on = [
-    aws_eks_cluster.cluster
+    aws_eks_cluster.cluster,
+    aws_iam_openid_connect_provider.oidc_provider
   ]
 
   source    = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
@@ -121,109 +23,84 @@ module "iam_load_balancer_controller_role" {
 	)
 }
 
-# ROLE FOR jumia-phone-validator
-resource "aws_iam_role" "iam_service_pods_role" {
-  name = "${local.tags.Service}-PodExecRole"
+# #ROLE FOR CLUSTER AUTOSCALING
+# resource "aws_iam_role" "cluster_autoscaler_role" {
+#   name = "${local.name}-ClusterAutoscalerRole"
 
-  assume_role_policy = <<POLICY
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "AllowFargatePods",
-      "Effect": "Allow",
-      "Principal": {
-        "Service": ["eks-fargate-pods.amazonaws.com"]
-      },
-      "Action": "sts:AssumeRole"
-    },
-    {
-      "Sid": "AllowIRSA",
-      "Effect": "Allow",
-      "Principal": {
-          "Federated": "${resource.aws_iam_openid_connect_provider.oidc_provider.arn}"
-      },
-      "Action": "sts:AssumeRoleWithWebIdentity",
-      "Condition": {
-          "StringEquals": {
-              "${replace(resource.aws_iam_openid_connect_provider.oidc_provider.arn, "/^(.*provider/)/", "")}:aud": "sts.amazonaws.com",
-              "${replace(resource.aws_iam_openid_connect_provider.oidc_provider.arn, "/^(.*provider/)/", "")}:sub": "system:serviceaccount:jumia-${local.product_name}:default"
-          }
-      }
-    }
-  ]
-}
-POLICY
+#   assume_role_policy = <<POLICY
+# {
+#   "Version": "2012-10-17",
+#   "Statement": [
+#     {
+#       "Sid": "AllowClusterAutoScaler",
+#       "Effect": "Allow",
+#       "Principal": {
+#           "Federated": "${resource.aws_iam_openid_connect_provider.oidc_provider.arn}"
+#       },
+#       "Action": "sts:AssumeRoleWithWebIdentity",
+#       "Condition": {
+#           "StringEquals": {
+#               "${replace(resource.aws_iam_openid_connect_provider.oidc_provider.arn, "/^(.*provider/)/", "")}:aud": "sts.amazonaws.com",
+#               "${replace(resource.aws_iam_openid_connect_provider.oidc_provider.arn, "/^(.*provider/)/", "")}:sub": "system:serviceaccount:kube-system:cluster-autoscaler"
+#           }
+#       }
+#     }
+#   ]
+# }
+# POLICY
 
-  tags = merge(
-		{ Resource = "iam_role" },
-		local.tags
-	)
-}
+#   tags = merge(
+# 		{ Resource = "iam_role" },
+# 		local.tags
+# 	)
+# }
 
-resource "aws_iam_role_policy_attachment" "AmazonEKSFargatePodExecutionRolePolicy_service" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
-  role       = resource.aws_iam_role.iam_service_pods_role.name
-}
+# data "aws_iam_policy_document" "cluster_autoscaler_policy_document" {
+#   statement {
+#     effect = "Allow"
 
-# ROLE FOR BASTION (EC2_INSTANCE)
-resource "aws_iam_role" "bastion_role" {
-  name = "${local.name}-EC2BastionRole"
+#     actions = [
+#       "autoscaling:SetDesiredCapacity",
+#       "autoscaling:TerminateInstanceInAutoScalingGroup"
+#     ]
 
-  assume_role_policy = <<EOF
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Action": "sts:AssumeRole",
-            "Principal": {
-               "Service": "ec2.amazonaws.com"
-            },
-            "Effect": "Allow",
-            "Sid": ""
-        }
-    ]
-}
-EOF
-}
+#     resources = ["*"]
 
-resource "aws_iam_role_policy" "secrets_policy" {
-  name = "${local.name}-secrets_policy"
-  role = aws_iam_role.bastion_role.id
+#     condition {
+#       test     = "ForAnyValue:StringEquals"
+#       variable = "aws:ResourceTag/k8s.io/cluster-autoscaler/${aws_eks_cluster.cluster.name}"
+#       values   = ["owned"]
+#     }
+#   }
+  
+#   statement {
+#     effect = "Allow"
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = [
-          "secretsmanager:GetResourcePolicy",
-          "secretsmanager:GetSecretValue",
-          "secretsmanager:DescribeSecret",
-          "secretsmanager:ListSecretVersionIds",
-        ]
-        Effect   = "Allow"
-        Resource = "${aws_secretsmanager_secret_version.secret_version.arn}"
-      },
-      {
-        Action = [
-          "secretsmanager:ListSecrets",
-        ]
-        Effect   = "Allow"
-        Resource = ["*"]
-      },
-      {
-        Action = [
-          "s3:GetObject",
-          "s3:GetObjectVersion"
-        ]
-        Effect   = "Allow"
-        Resource = ["arn:aws:s3:::${local.bootstrap_bucket}/*"]
-      },
-    ]
-  })
-}
+#     actions = [
+#       "autoscaling:DescribeAutoScalingInstances",
+#       "autoscaling:DescribeAutoScalingGroups",
+#       "ec2:DescribeLaunchTemplateVersions",
+#       "autoscaling:DescribeTags",
+#       "autoscaling:DescribeLaunchConfigurations"
+#     ]
 
-resource "aws_iam_instance_profile" "bastion_instance_profile" {
-  name = "${local.name}-instance_profile"
-  role = aws_iam_role.bastion_role.name
-}
+#     resources = ["*"]
+#   }
+
+#   depends_on = [
+#     aws_eks_cluster.cluster
+#   ]
+# }
+
+# resource "aws_iam_policy" "cluster_autoscaler_policy" {
+#   name        = "AmazonEKSClusterAutoscalerPolicy_Jumia"
+#   path        = "/"
+#   description = "Cluster AutoScaler Policy"
+
+#   policy = data.aws_iam_policy_document.cluster_autoscaler_policy_document.json
+# }
+
+# resource "aws_iam_role_policy_attachment" "cluster_autoscaler_role_attach" {
+#   policy_arn = aws_iam_policy.cluster_autoscaler_policy.arn
+#   role = aws_iam_role.cluster_autoscaler_role.name
+# }

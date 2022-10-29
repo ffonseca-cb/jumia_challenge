@@ -53,15 +53,20 @@ resource "aws_route53_record" "db_record" {
   ]
 }
 
-# BASTION FRIENDLY URL
-resource "aws_route53_record" "bastion_record" {
-  name            = "bastion.${local.domain}"
-  records         = [aws_instance.bastion_instance.public_dns]
-  ttl             = 300
-  type            = "CNAME"
-  zone_id         = local.dns_zone_id
+#BASTION FRIENDLY URL
+resource "aws_eip" "lb" {
+  instance = aws_instance.bastion_instance.id
+  vpc      = true
 
   depends_on = [
-    aws_instance.bastion_instance
+    module.vpc
   ]
+}
+
+resource "aws_route53_record" "bastion_record" {
+  zone_id = local.dns_zone_id
+  name    = "bastion.${local.domain}"
+  type    = "A"
+  ttl     = 300
+  records = [aws_eip.lb.public_ip]
 }

@@ -1,7 +1,7 @@
 # QUERY ON LOAD BALANCERS TO FIND API ORIGIN
 data "aws_alb" "alb" {
   tags = {
-    "elbv2.k8s.aws/cluster" = local.name
+    "elbv2.k8s.aws/cluster" = "${replace(basename(local.name), "_", "-")}"
   }
 
   depends_on = [

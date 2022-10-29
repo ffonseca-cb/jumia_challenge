@@ -61,7 +61,8 @@ sudo amazon-linux-extras enable postgresql14
 sudo yum install postgresql -y
 
 # ENV variables - *** Switch in accordance with locals values on main.tf ***
-export BOOTSTRAP_BUCKET="tfstate-jumia-phone-validator-dev"
+export BOOTSTRAP_BUCKET="tfstate-jumia-phone-validator-prd"
+export SQL_KEY_PATH="sql-load/sample.sql"
 
 # Loading data on database
 aws s3 cp s3://$BOOTSTRAP_BUCKET/$SQL_KEY_PATH .
@@ -84,4 +85,93 @@ resource "aws_instance" "bastion_instance" {
     { Name = "${local.name}_bastion" },
 		local.tags
   )
+}
+
+# ROLE FOR BASTION (EC2_INSTANCE)
+resource "aws_iam_role" "bastion_role" {
+  name = "${local.name}-EC2BastionRole"
+
+  assume_role_policy = <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": "sts:AssumeRole",
+            "Principal": {
+               "Service": "ec2.amazonaws.com"
+            },
+            "Effect": "Allow",
+            "Sid": ""
+        }
+    ]
+}
+EOF
+}
+
+resource "aws_iam_role_policy" "secrets_policy" {
+  name = "${local.name}-secrets_policy"
+  role = aws_iam_role.bastion_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "secretsmanager:GetResourcePolicy",
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:ListSecretVersionIds",
+        ]
+        Effect   = "Allow"
+        Resource = "${aws_secretsmanager_secret_version.secret_version.arn}"
+      },
+      {
+        Action = [
+          "secretsmanager:ListSecrets",
+        ]
+        Effect   = "Allow"
+        Resource = ["*"]
+      },
+      {
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion"
+        ]
+        Effect   = "Allow"
+        Resource = ["arn:aws:s3:::${local.service_name}/*"]
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "sql_load_policy" {
+  name = "${local.name}-sql_load_policy"
+  role = aws_iam_role.bastion_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid = "ListObjectsInBucket"
+        Action = [
+          "s3:ListBucket",
+        ]
+        Effect   = "Allow"
+        Resource = "arn:aws:s3:::${local.bootstrap_bucket}"
+      },
+      {
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion"
+        ]
+        Effect   = "Allow"
+        Resource = ["arn:aws:s3:::${local.bootstrap_bucket}/*"]
+      },
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "bastion_instance_profile" {
+  name = "${local.name}-instance_profile"
+  role = aws_iam_role.bastion_role.name
 }

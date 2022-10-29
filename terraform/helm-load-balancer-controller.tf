@@ -39,7 +39,19 @@ resource "helm_release" "aws_lb_controller" {
       EOT
   ]
 
+  set {
+    name = "region"
+    value = local.region
+  }
+
+  set {
+    name = "vpcId"
+    value = module.vpc.vpc_id
+  }
+
   depends_on = [
-    kubernetes_service_account_v1.aws_lb_controller_sa
+    kubernetes_service_account_v1.aws_lb_controller_sa,
+    module.iam_load_balancer_controller_role
+
   ]
 }

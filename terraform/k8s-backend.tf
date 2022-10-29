@@ -43,7 +43,7 @@ resource "kubernetes_deployment_v1" "deployment" {
   }
 
   spec {
-    replicas = 1
+    replicas = 4
 
     selector {
       match_labels = {
@@ -65,6 +65,11 @@ resource "kubernetes_deployment_v1" "deployment" {
 
           port {
             container_port = 8080
+          }
+
+          env {
+            name = "PGPASS"
+            value = var.db_password
           }
 
           resources {
@@ -130,18 +135,18 @@ resource "kubernetes_ingress_v1" "ingress" {
   ]
 }
 
-# resource "kubernetes_horizontal_pod_autoscaler_v1" "hpa" {
-#   metadata {
-#     name = "${local.service_name}-hpa"
-#   }
+resource "kubernetes_horizontal_pod_autoscaler_v1" "hpa" {
+  metadata {
+    name = "${local.service_name}-hpa"
+  }
 
-#   spec {
-#     max_replicas = 20
-#     min_replicas = 1
+  spec {
+    max_replicas = 20
+    min_replicas = 4
 
-#     scale_target_ref {
-#       kind = "Deployment"
-#       name = local.deployment
-#     }
-#   }
-# }
+    scale_target_ref {
+      kind = "Deployment"
+      name = local.deployment
+    }
+  }
+}
