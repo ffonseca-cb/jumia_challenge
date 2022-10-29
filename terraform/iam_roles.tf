@@ -9,7 +9,10 @@ resource "aws_iam_role" "iam_eks_role" {
     {
       "Effect": "Allow",
       "Principal": {
-        "Service": "eks.amazonaws.com"
+        "Service": [
+          "eks.amazonaws.com",
+          "ecs.amazonaws.com"
+        ]
       },
       "Action": "sts:AssumeRole"
     }
@@ -65,7 +68,12 @@ resource "aws_iam_role" "iam_default_pods_role" {
     {
       "Effect": "Allow",
       "Principal": {
-        "Service": "eks-fargate-pods.amazonaws.com"
+        "Service": [
+          "eks-fargate-pods.amazonaws.com",
+          "eks.amazonaws.com",
+          "ecs.amazonaws.com",
+          "ec2.amazonaws.com"
+        ]
       },
       "Action": "sts:AssumeRole"
     }
@@ -125,7 +133,7 @@ resource "aws_iam_role" "iam_service_pods_role" {
       "Sid": "AllowFargatePods",
       "Effect": "Allow",
       "Principal": {
-        "Service": "eks-fargate-pods.amazonaws.com"
+        "Service": ["eks-fargate-pods.amazonaws.com"]
       },
       "Action": "sts:AssumeRole"
     },
@@ -139,7 +147,7 @@ resource "aws_iam_role" "iam_service_pods_role" {
       "Condition": {
           "StringEquals": {
               "${replace(resource.aws_iam_openid_connect_provider.oidc_provider.arn, "/^(.*provider/)/", "")}:aud": "sts.amazonaws.com",
-              "${replace(resource.aws_iam_openid_connect_provider.oidc_provider.arn, "/^(.*provider/)/", "")}:sub": "system:serviceaccount:jumia-${replace(basename(local.tags.Product), "_", "-")}:default"
+              "${replace(resource.aws_iam_openid_connect_provider.oidc_provider.arn, "/^(.*provider/)/", "")}:sub": "system:serviceaccount:jumia-${local.product_name}:default"
           }
       }
     }
@@ -179,7 +187,43 @@ resource "aws_iam_role" "bastion_role" {
 EOF
 }
 
-resource "aws_iam_instance_profile" "bastion_instance_rofile" {
+resource "aws_iam_role_policy" "secrets_policy" {
+  name = "${local.name}-secrets_policy"
+  role = aws_iam_role.bastion_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "secretsmanager:GetResourcePolicy",
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:ListSecretVersionIds",
+        ]
+        Effect   = "Allow"
+        Resource = "${aws_secretsmanager_secret_version.secret_version.arn}"
+      },
+      {
+        Action = [
+          "secretsmanager:ListSecrets",
+        ]
+        Effect   = "Allow"
+        Resource = ["*"]
+      },
+      {
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion"
+        ]
+        Effect   = "Allow"
+        Resource = ["arn:aws:s3:::${local.bootstrap_bucket}/*"]
+      },
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "bastion_instance_profile" {
   name = "${local.name}-instance_profile"
   role = aws_iam_role.bastion_role.name
 }

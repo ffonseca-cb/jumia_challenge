@@ -2,7 +2,7 @@
 module "frontend_bucket" {
   source = "terraform-aws-modules/s3-bucket/aws"
 
-  bucket = "${replace(basename(local.tags.Service), "_", "-")}-frontend-${local.tags.Environment}"
+  bucket = "${local.service_name}-frontend-${local.tags.Environment}"
 
   force_destroy = true
 

@@ -1,6 +1,6 @@
 # CONTAINER REPO
 resource "aws_ecr_repository" "ecr" {
-  name = replace(basename(local.tags.Service), "_", "-")
+  name = local.service_name
   force_delete = true
 
   encryption_configuration {

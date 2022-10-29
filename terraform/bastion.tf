@@ -34,10 +34,9 @@ resource "aws_security_group_rule" "bastion_sg_rule_allow_all_egress" {
 }
 
 resource "aws_key_pair" "bastion_kp" {
-
   # Keypair was previously created with ssh-keygen (if needed, ask Felipe Fonseca for private key)
   key_name   = "bastion_kp"
-  public_key = file("bastion_keypair.pub")
+  public_key = file("resources/bastion_keypair.pub")
 }
 
 data "aws_ami" "amazon_linux" {
@@ -52,33 +51,37 @@ data "aws_ami" "amazon_linux" {
   }
 }
 
-
 locals {
   instance-userdata = <<EOF
 #!/bin/bash
+
+# updates and installing tools
 sudo yum update -y
-sudo amazon-linux-extras enable postgresql13
+sudo amazon-linux-extras enable postgresql14
 sudo yum install postgresql -y
+
+# ENV variables - *** Switch in accordance with locals values on main.tf ***
+export BOOTSTRAP_BUCKET="tfstate-jumia-phone-validator-dev"
+
+# Loading data on database
+aws s3 cp s3://$BOOTSTRAP_BUCKET/$SQL_KEY_PATH .
 EOF
 }
 
-module "ec2_instance" {
-  source  = "terraform-aws-modules/ec2-instance/aws"
-  version = "~> 3.0"
+resource "aws_instance" "bastion_instance" {
+  ami           = data.aws_ami.amazon_linux.id
+  instance_type = "t3a.micro"
 
-  name = "${local.name}_bastion"
-
-  ami                     = data.aws_ami.amazon_linux.id
-  instance_type           = "t3a.micro"
   key_name                = aws_key_pair.bastion_kp.key_name
   vpc_security_group_ids  = [module.bastion_sg.security_group_id]
   subnet_id               = module.vpc.public_subnets[0]
-  iam_instance_profile    = aws_iam_instance_profile.bastion_instance_rofile.name
+  iam_instance_profile    = aws_iam_instance_profile.bastion_instance_profile.name
 
   user_data_base64 = base64encode(local.instance-userdata)
 
   tags = merge(
 		{ Resource = "ec2_instance" },
+    { Name = "${local.name}_bastion" },
 		local.tags
-	)
+  )
 }
