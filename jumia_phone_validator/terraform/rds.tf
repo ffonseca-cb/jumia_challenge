@@ -74,3 +74,15 @@ resource "aws_db_instance" "postgres" {
 		local.tags
 	)
 }
+
+# UPLOADING SQL LOAD TO S3 (tfstate bucket in this case)
+resource "aws_s3_object" "object" {
+  bucket = local.bootstrap_bucket
+  key    = "sql-load/sample.sql"
+  source = "${path.module}/../database/sample.sql"
+}
+
+data "aws_s3_object" "secret" {
+  bucket = local.bootstrap_bucket
+  key    = "rds/secret"
+}

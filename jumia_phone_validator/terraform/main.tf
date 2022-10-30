@@ -14,6 +14,7 @@ locals {
   domain  = "jumia-devops-challenge.eu"
   dns_zone_id = "Z0524081XI5U8NS279SJ" # Created automatically with domain registrar
 
+  # *** Switch in accordance with values on bastion.tf ***
   bootstrap_bucket = "tfstate-jumia-phone-validator-prd"
 
   tags = {

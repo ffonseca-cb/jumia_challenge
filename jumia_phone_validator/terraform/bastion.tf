@@ -53,9 +53,20 @@ data "aws_ami" "amazon_linux" {
 
 locals {
   instance-userdata = <<EOF
-    #!/bin/bash
-    sudo yum update -y
-  EOF
+#!/bin/bash
+
+# updates and installing tools
+sudo yum update -y
+sudo amazon-linux-extras enable postgresql14
+sudo yum install postgresql -y
+
+# ENV variables - *** Switch in accordance with locals values on main.tf ***
+export BOOTSTRAP_BUCKET="tfstate-jumia-phone-validator-prd"
+export SQL_KEY_PATH="sql-load/sample.sql"
+
+# Loading data on database
+aws s3 cp s3://$BOOTSTRAP_BUCKET/$SQL_KEY_PATH .
+EOF
 }
 
 resource "aws_instance" "bastion_instance" {
